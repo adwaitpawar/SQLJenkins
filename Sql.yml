@@ -1,0 +1,82 @@
+---
+- name: Download a Mysql
+  hosts: all
+  become: yes
+  vars:
+     mysql_password: Pass@321
+
+  tasks:
+    - name: Find .tar and .zip files in a directory
+      find:
+        paths: /home/emmanuel/s1
+        patterns: '*.tar,*.zip'
+        recurse: yes
+      register: archive_files
+
+    - name: Unarchive the files
+      unarchive:
+        src: "{{ item.path }}"
+        dest: /home/emmanuel/s1
+        remote_src: yes
+      with_items: "{{ archive_files.files }}"
+
+
+    - name: Install RPM packages
+      shell: yum install /home/emmanuel/s1/*.rpm -y
+      become: yes
+      become_user: root
+
+
+    - name: check
+      command: sudo systemctl start mysqld
+    
+
+    - name: check tmp password
+      shell: sudo cat /var/log/mysqld.log | grep root@localhost
+      register: chk
+
+    - debug:
+        var: chk
+
+    - name: Extract MySQL root password
+      shell: "sudo cat /var/log/mysqld.log | grep 'root@localhost' | tail -n 1 | awk '{print $NF}'"
+      register: password_output
+      changed_when: false
+
+    - set_fact:
+        mysql_root_password: "{{ password_output.stdout_lines[0] | default('') }}"
+
+    - debug:
+        var: mysql_root_password
+
+
+    - name: Secure MySQL installation
+      expect:
+        command: mysql_secure_installation -uroot -p"{{ mysql_root_password }}"
+        responses:
+          'Enter Password :': '{{ mysql_root_password }}'
+          'New password:': "{{ mysql_password }}"
+          'Re-enter new password:': "{{ mysql_password }}"
+          'Change the Password For root: ? ': 'N'
+          'Remove anonymous users? [Y/n]': 'Y'
+          'Disallow root login remotely? [Y/n]': 'N'
+          'Remove test database and access to it? [Y/n]': 'Y'
+          'Reload privilege tables now? [Y/n]': 'Y'
+          'The existing password for the user account root has expired. Please set a new password.': '{{ mysql_password }}'
+      environment:
+        MYSQL_PWD: "{{ mysql_root_password }}"
+      register: check
+      async: 3600
+      poll: 300
+      ignore_errors: yes 
+    - debug:
+       var: check
+
+    - name: mysql version
+      command: mysql --version
+      register: hi
+
+
+    - debug:
+        var: hi
+
